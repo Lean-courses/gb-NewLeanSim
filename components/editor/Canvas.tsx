@@ -55,6 +55,37 @@ function CanvasInner() {
     prevCount.current = nodeCount
   }, [nodeCount, fitView])
 
+  /**
+   * Reencuadrar cuando CAMBIA EL TAMANO del lienzo.
+   *
+   * Un timeout tras abrir el panel no alcanza: fitView mide el contenedor en
+   * el momento en que se lo llama, y si el layout todavia no se asento mide la
+   * altura vieja y deja el modelo fuera de la vista. Un ResizeObserver dispara
+   * cuando el tamano ya es el definitivo, y de paso cubre el redimensionado de
+   * la ventana sin codigo extra.
+   */
+  useEffect(() => {
+    const el = wrapper.current
+    if (!el) return
+    let t: ReturnType<typeof setTimeout> | null = null
+    let first = true
+    const ro = new ResizeObserver(() => {
+      if (first) {
+        // El primer disparo es el montaje; de eso ya se encarga fitView del
+        // propio ReactFlow.
+        first = false
+        return
+      }
+      if (t) clearTimeout(t)
+      t = setTimeout(() => void fitView({ padding: 0.25, maxZoom: 1.1, duration: 200 }), 80)
+    })
+    ro.observe(el)
+    return () => {
+      if (t) clearTimeout(t)
+      ro.disconnect()
+    }
+  }, [fitView])
+
   const errorIds = useMemo(
     () => new Set(issues.filter((i) => i.severity === 'error').flatMap((i) => i.nodeIds ?? [])),
     [issues],

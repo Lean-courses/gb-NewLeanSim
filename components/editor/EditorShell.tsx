@@ -24,6 +24,8 @@ import { Inspector } from './Inspector'
 import { LineBar } from './LineBar'
 import { IssuePanel } from './IssuePanel'
 import { CapacityChart } from '../results/CapacityChart'
+import { FindingsPanel } from '../results/FindingsPanel'
+import { diagnose } from '@/lib/sim/diagnose/findings'
 import { StateBar, StateLegend, presentStates } from '../results/StateBar'
 import { duration, percent, rate, units } from '@/lib/format'
 
@@ -65,7 +67,15 @@ export function EditorShell({ initial, locale }: { initial: SimModel; locale: 'e
     if (!model || blocked) return
     setShowResults(true)
     runner.runSweep([
-      { id: 'run', label: es ? 'Corrida' : 'Run', model, config: model.defaults },
+      {
+        id: 'run',
+        label: es ? 'Corrida' : 'Run',
+        model,
+        config: model.defaults,
+        // La sensibilidad convierte "parece el cuello de botella" en "acelerarla
+        // un 10% te da 9% mas de salida", que es el numero que convence.
+        withSensitivity: true,
+      },
     ])
   }, [model, blocked, runner, es])
 
@@ -77,7 +87,8 @@ export function EditorShell({ initial, locale }: { initial: SimModel; locale: 'e
 
   if (!model) return null
 
-  const result = runner.results[0]?.result ?? null
+  const variant = runner.results[0] ?? null
+  const result = variant?.result ?? null
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] flex-col">
@@ -120,7 +131,14 @@ export function EditorShell({ initial, locale }: { initial: SimModel; locale: 'e
         </div>
       </div>
 
-      {/* --- cuerpo --- */}
+      {/*
+        --- cuerpo ---
+        El panel de resultados es HERMANO de la fila, no una capa flotante
+        encima. Flotando, el contenedor del lienzo no se achica, React Flow
+        sigue encuadrando contra la altura completa y el modelo queda tapado
+        justo cuando hay que señalarlo mientras se leen sus numeros.
+      */}
+      <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative flex min-h-0 flex-1">
         <aside className="w-[172px] shrink-0 overflow-y-auto border-r border-border bg-surface">
           <Palette locale={locale} />
@@ -128,7 +146,7 @@ export function EditorShell({ initial, locale }: { initial: SimModel; locale: 'e
 
         <div className="relative min-w-0 flex-1">
           <Canvas />
-          {cap && cap.stations.length > 0 && (
+          {cap && cap.stations.length > 0 && !showResults && (
             <div className="pointer-events-none absolute bottom-3 left-3 right-3 max-w-[480px] rounded-card border border-border bg-surface/95 p-3.5 backdrop-blur">
               <h3 className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
                 {es ? 'Ciclo efectivo vs takt' : 'Effective cycle vs takt'}
@@ -150,15 +168,19 @@ export function EditorShell({ initial, locale }: { initial: SimModel; locale: 'e
           </div>
         </aside>
 
+      </div>
+
         {showResults && (
           <ResultsPanel
             result={result}
+            sensitivity={variant?.sensitivity}
             model={model}
             locale={locale}
             running={runner.running}
             pct={runner.pct}
             error={runner.error?.message ?? null}
             onClose={() => setShowResults(false)}
+            onFocusNode={(id) => useModel.getState().select(id)}
           />
         )}
       </div>
@@ -168,31 +190,55 @@ export function EditorShell({ initial, locale }: { initial: SimModel; locale: 'e
 
 function ResultsPanel({
   result,
+  sensitivity,
   model,
   locale,
   running,
   pct,
   error,
   onClose,
+  onFocusNode,
 }: {
   result: import('@/lib/sim/types/results').RunResult | null
+  sensitivity?: import('@/lib/sim/diagnose/sensitivity').SensitivityReport
   model: SimModel
   locale: 'es' | 'en'
   running: boolean
   pct: number
   error: string | null
   onClose: () => void
+  onFocusNode: (id: string) => void
 }) {
   const es = locale === 'es'
+  const [tab, setTab] = useState<'kpis' | 'findings'>('findings')
   const stations = result?.nodes.filter((n) => n.type === 'process' || n.type === 'inspection') ?? []
   const diag = result ? diagnoseBottleneck(model, result) : null
+  const report = result ? diagnose(model, result, sensitivity) : null
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-20 max-h-[60%] overflow-y-auto border-t border-border-strong bg-surface shadow-[0_-12px_32px_rgba(0,0,0,0.5)]">
+    <div className="h-[46%] shrink-0 overflow-y-auto border-t border-border-strong bg-surface">
       <div className="sticky top-0 flex items-center gap-3 border-b border-border bg-surface px-5 py-3">
-        <h2 className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted">
-          {es ? 'Resultados' : 'Results'}
-        </h2>
+        <div className="flex rounded-full border border-border bg-surface-2 p-0.5">
+          {(['findings', 'kpis'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setTab(k)}
+              className={[
+                'rounded-full px-3 py-1 text-[12px] font-medium transition-colors',
+                tab === k ? 'bg-surface-3 text-ink' : 'text-ink-faint hover:text-ink-muted',
+              ].join(' ')}
+            >
+              {k === 'findings'
+                ? es
+                  ? 'Oportunidades'
+                  : 'Opportunities'
+                : es
+                  ? 'Resultados'
+                  : 'Results'}
+            </button>
+          ))}
+        </div>
         {running && (
           <span className="tnum text-[12px] text-ink-faint">
             {es ? 'Corriendo' : 'Running'} {percent(pct)}
@@ -210,7 +256,11 @@ function ResultsPanel({
       <div className="p-5">
         {error && <p className="text-[13px] text-bad">{error}</p>}
 
-        {result && (
+        {result && tab === 'findings' && report && (
+          <FindingsPanel report={report} locale={locale} onFocusNode={onFocusNode} />
+        )}
+
+        {result && tab === 'kpis' && (
           <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Kpi label={es ? 'Throughput' : 'Throughput'} value={`${rate(result.kpis.throughputPerHour)}`} unit="u/h" />

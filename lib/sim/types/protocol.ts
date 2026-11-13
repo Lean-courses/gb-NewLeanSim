@@ -2,6 +2,7 @@
 
 import type { RunConfig, SimModel } from './model'
 import type { RunResult } from './results'
+import type { SensitivityReport } from '../diagnose/sensitivity'
 import type { ValidationIssue } from '../validate/validate'
 
 export interface RunVariant {
@@ -10,6 +11,12 @@ export interface RunVariant {
   /** Modelo ya parcheado: el worker no conoce el concepto de escenario. */
   model: SimModel
   config: RunConfig
+  /**
+   * Corre tambien la auto-sensibilidad (N corridas extra, una por estacion).
+   * Es lo que convierte "la Est.3 parece el cuello de botella" en "acelerar la
+   * Est.3 un 10% te da 9% mas de salida".
+   */
+  withSensitivity?: boolean
 }
 
 export type ToWorker =
@@ -21,7 +28,23 @@ export type ToWorker =
 export type FromWorker =
   | { type: 'validated'; runId: string; issues: ValidationIssue[] }
   | { type: 'progress'; runId: string; variantId?: string; pct: number; simTimeMs: number; completions: number }
-  | { type: 'variantDone'; runId: string; variantId: string; label: string; result: RunResult }
-  | { type: 'done'; runId: string; results: Array<{ variantId: string; label: string; result: RunResult }> }
+  | {
+      type: 'variantDone'
+      runId: string
+      variantId: string
+      label: string
+      result: RunResult
+      sensitivity?: SensitivityReport
+    }
+  | {
+      type: 'done'
+      runId: string
+      results: Array<{
+        variantId: string
+        label: string
+        result: RunResult
+        sensitivity?: SensitivityReport
+      }>
+    }
   | { type: 'cancelled'; runId: string }
   | { type: 'error'; runId: string; code: string; message: string; nodeId?: string }

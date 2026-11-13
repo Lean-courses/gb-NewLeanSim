@@ -17,11 +17,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FromWorker, RunVariant, ToWorker } from '@/lib/sim/types/protocol'
 import type { RunResult } from '@/lib/sim/types/results'
+import type { SensitivityReport } from '@/lib/sim/diagnose/sensitivity'
 
 export interface VariantResult {
   variantId: string
   label: string
   result: RunResult
+  sensitivity?: SensitivityReport
 }
 
 export interface RunnerState {
@@ -53,7 +55,15 @@ export function useSimRunner() {
         case 'variantDone':
           setState((s) => ({
             ...s,
-            results: [...s.results, { variantId: m.variantId, label: m.label, result: m.result }],
+            results: [
+              ...s.results,
+              {
+                variantId: m.variantId,
+                label: m.label,
+                result: m.result,
+                sensitivity: m.sensitivity,
+              },
+            ],
           }))
           return
         case 'done':

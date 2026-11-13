@@ -14,6 +14,7 @@
 
 import { compileRun } from '@/lib/sim/run'
 import { validate } from '@/lib/sim/validate/validate'
+import { sensitivity } from '@/lib/sim/diagnose/sensitivity'
 import type { FromWorker, RunVariant, ToWorker } from '@/lib/sim/types/protocol'
 import type { RunResult } from '@/lib/sim/types/results'
 
@@ -44,7 +45,12 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
 }
 
 async function execute(runId: string, variants: RunVariant[]): Promise<void> {
-  const results: Array<{ variantId: string; label: string; result: RunResult }> = []
+  const results: Array<{
+    variantId: string
+    label: string
+    result: RunResult
+    sensitivity?: import('@/lib/sim/diagnose/sensitivity').SensitivityReport
+  }> = []
   try {
     for (const v of variants) {
       const run = compileRun(v.model, v.config)
@@ -67,8 +73,19 @@ async function execute(runId: string, variants: RunVariant[]): Promise<void> {
         await yieldToEventLoop()
       }
       const result = run.finish()
-      results.push({ variantId: v.id, label: v.label, result })
-      post({ type: 'variantDone', runId, variantId: v.id, label: v.label, result })
+      await yieldToEventLoop()
+      // La sensibilidad son N corridas mas. Se hacen despues de entregar el
+      // resultado principal para que la UI no quede esperando por ellas.
+      const sens = v.withSensitivity ? sensitivity(v.model) : undefined
+      results.push({ variantId: v.id, label: v.label, result, sensitivity: sens })
+      post({
+        type: 'variantDone',
+        runId,
+        variantId: v.id,
+        label: v.label,
+        result,
+        sensitivity: sens,
+      })
       await yieldToEventLoop()
     }
     post({ type: 'done', runId, results })

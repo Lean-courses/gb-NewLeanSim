@@ -35,6 +35,18 @@ export interface BottleneckDiagnosis {
   nodeId: string | null
   label: string | null
   utilization: number
+  /**
+   * Fraccion del tiempo en que la estacion NO esta disponible para mas
+   * trabajo: produciendo, en cambio de formato, parada o esperando operario.
+   *
+   * Es el numero honesto para una restriccion. Una estacion con 47% de
+   * utilizacion, 33% de changeover y 17% de paradas esta ocupada el 97% del
+   * tiempo: decir "trabaja al 47%" suena a que le sobra capacidad cuando en
+   * realidad no le queda ni un minuto libre.
+   */
+  occupied: number
+  /** Desglose de ese tiempo ocupado. */
+  breakdown: { busy: number; setup: number; down: number; blocked: number; waitOp: number }
   /** Utilizacion promedio del resto de las estaciones. */
   restUtilization: number
   /** Ranking completo, de mas a menos sospechoso. */
@@ -48,8 +60,18 @@ const TIE = 0.05
 
 export function diagnoseBottleneck(model: SimModel, result: RunResult): BottleneckDiagnosis {
   const stations = result.nodes.filter((n) => n.type === 'process' || n.type === 'inspection')
+  const EMPTY_BREAKDOWN = { busy: 0, setup: 0, down: 0, blocked: 0, waitOp: 0 }
   if (stations.length === 0) {
-    return { kind: 'balanced', nodeId: null, label: null, utilization: 0, restUtilization: 0, ranked: [] }
+    return {
+      kind: 'balanced',
+      nodeId: null,
+      label: null,
+      utilization: 0,
+      occupied: 0,
+      breakdown: EMPTY_BREAKDOWN,
+      restUtilization: 0,
+      ranked: [],
+    }
   }
 
   const byId = new Map(stations.map((s) => [s.nodeId, s]))
@@ -85,13 +107,25 @@ export function diagnoseBottleneck(model: SimModel, result: RunResult): Bottlene
     .sort((a, b) => b.score - a.score)
 
   const top = ranked[0]!
+  const topStat = byId.get(top.nodeId)!
+  const occupied = 1 - topStat.states.starved
+  const breakdown = {
+    busy: topStat.states.busy,
+    setup: topStat.states.setup,
+    down: topStat.states.down,
+    blocked: topStat.states.blocked,
+    waitOp: topStat.states.waitOp,
+  }
   const second = ranked[1]
   const rest = stations.filter((s) => s.nodeId !== top.nodeId)
   const restUtilization =
     rest.length > 0 ? rest.reduce((a, s) => a + s.utilization, 0) / rest.length : 0
 
   // Nadie saturado: la linea sobra para la demanda, la restriccion esta afuera.
-  if (top.utilization < SATURATED) {
+  // Se mide con el tiempo OCUPADO, no con la utilizacion: una estacion que
+  // produce el 47% pero ademas pasa 33% en cambio de formato y 17% parada no
+  // tiene capacidad de sobra, tiene un problema distinto.
+  if (occupied < SATURATED) {
     const spread = Math.max(...stations.map((s) => s.utilization)) - Math.min(...stations.map((s) => s.utilization))
     if (spread < 0.1) {
       return {
@@ -99,6 +133,8 @@ export function diagnoseBottleneck(model: SimModel, result: RunResult): Bottlene
         nodeId: null,
         label: null,
         utilization: top.utilization,
+        occupied,
+        breakdown,
         restUtilization,
         ranked,
       }
@@ -112,6 +148,8 @@ export function diagnoseBottleneck(model: SimModel, result: RunResult): Bottlene
       nodeId: null,
       label: null,
       utilization: top.utilization,
+      occupied,
+      breakdown,
       restUtilization,
       ranked,
     }
@@ -122,6 +160,8 @@ export function diagnoseBottleneck(model: SimModel, result: RunResult): Bottlene
     nodeId: top.nodeId,
     label: top.label,
     utilization: top.utilization,
+    occupied,
+    breakdown,
     restUtilization,
     ranked,
   }
