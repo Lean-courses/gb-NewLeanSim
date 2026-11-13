@@ -85,17 +85,22 @@ export class ProcessNode extends DischargingNode {
   private statsT0: SimTime = 0
 
   constructor(init: ProcessInit) {
-    // El slot de salida necesita poder sobrepasar el lote de transferencia:
-    // si el lote de proceso es 3 y el de transferencia 10, nunca se llega a
-    // exactamente 10 y la estacion se traba. Con tb + pb - 1 siempre se puede
-    // alcanzar el umbral.
+    // Dimensionado del slot de salida. Dos requisitos distintos:
+    //
+    //  1. Tiene que poder SOBREPASAR el lote de transferencia. Con lote de
+    //     proceso 3 y de transferencia 10 nunca se llega a exactamente 10
+    //     (9 -> 12), asi que un tope de 10 trabaria la estacion para siempre.
+    //  2. Tiene que alcanzar para TODAS las maquinas en paralelo a la vez.
+    //     Cada servidor reserva su lote antes de arrancar; si el slot solo
+    //     entra un lote, la segunda maquina queda bloqueada permanentemente y
+    //     la estacion entrega la mitad de su capacidad sin que nada avise.
     super(
       init.idx,
       init.id,
       'process',
       init.label,
       init.transferBatch,
-      init.transferBatch + init.processBatch - 1,
+      init.transferBatch + init.servers * init.processBatch - 1,
     )
     this.inbox = new Holder(init.queueCap)
     this.processBatch = init.processBatch
