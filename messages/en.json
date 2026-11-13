@@ -1,0 +1,42 @@
+{
+  "app": {
+    "name": "NewLeanSim",
+    "tagline": "Simulate processes. Show the opportunities."
+  },
+  "nav": {
+    "library": "Library",
+    "editor": "Editor",
+    "results": "Results",
+    "language": "Language"
+  },
+  "library": {
+    "templatesTitle": "Lean templates",
+    "templatesSubtitle": "Four demos ready to run. One click.",
+    "myModelsTitle": "My models",
+    "myModelsEmpty": "You have not saved any models yet.",
+    "newModel": "New model",
+    "open": "Open",
+    "watch": "What to watch",
+    "insight": "The point",
+    "scenarios": "Scenarios"
+  },
+  "run": {
+    "run": "Run",
+    "running": "Running",
+    "cancel": "Cancel",
+    "throughput": "Throughput",
+    "leadTime": "Lead time",
+    "wip": "WIP",
+    "utilization": "Utilisation",
+    "bottleneck": "Bottleneck",
+    "unitsPerHour": "u/h"
+  },
+  "states": {
+    "busy": "Busy",
+    "starved": "Starved",
+    "blocked": "Blocked",
+    "setup": "Changeover",
+    "waitOp": "Waiting operator",
+    "down": "Down"
+  }
+}

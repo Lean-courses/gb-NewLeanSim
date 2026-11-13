@@ -1,9 +1,15 @@
 /**
- * Punto de entrada del motor: simulate(model, config) -> RunResult.
+ * Runner del motor.
  *
- * Funcion pura, sin dependencias del DOM. Es lo que permite correr exactamente
- * el mismo codigo dentro de un Web Worker en la app y dentro de Node en los
- * tests contra resultados analiticos.
+ * Expone dos formas de correr el mismo codigo:
+ *
+ *   simulate()   - de una, para tests y corridas cortas.
+ *   compileRun() - paso a paso, para que el Web Worker pueda CEDER el event
+ *                  loop entre tandas de eventos y atender un cancel sin
+ *                  SharedArrayBuffer (que exigiria headers COOP/COEP y
+ *                  complicaria el deploy en Vercel).
+ *
+ * Funcion pura, sin DOM: los mismos archivos corren en el worker y en Node.
  */
 
 import { compile } from './core/compile'
@@ -32,11 +38,13 @@ import type { TraceChunk } from './types/trace'
 
 const DEFAULT_TRACE_RECORDS = 200_000
 const DEFAULT_TRACE_ENTITIES = 2_500
+/** Eventos por tanda: unos 10 ms de trabajo antes de ceder el event loop. */
+const SLICE_EVENTS = 50_000
 
 export interface SimulateOptions {
   /** Numero de replica: desplaza la semilla. */
   replication?: number
-  /** Devuelve tambien los chunks de traza para la animacion. */
+  /** Graba tambien la traza para la animacion. */
   withTrace?: boolean
 }
 
@@ -45,65 +53,133 @@ export interface SimulateOutput {
   trace: TraceChunk[]
 }
 
+export class SimRun {
+  private readonly eng: Engine
+  private readonly stats: StatsCollector
+  private readonly trace: TraceRecorder
+  private readonly queueSeries: Record<string, BucketSeries> = {}
+  private readonly warmupMs: SimTime
+  private readonly horizonMs: SimTime | null
+  private readonly maxCompletions: number | null
+  private readonly nodes: readonly unknown[]
+  private readonly model: SimModel
+  private done = false
+  private cached: RunResult | null = null
+
+  constructor(model: SimModel, config: RunConfig, opts: SimulateOptions = {}) {
+    this.model = model
+    const rep = opts.replication ?? 0
+    const seed = (config.seed + rep) | 0
+    const msPerUnit = MS_PER_UNIT[model.line.timeUnit]
+    const toMs = (v: number): SimTime => Math.round(v * msPerUnit)
+
+    const compiled = compile(model)
+    this.horizonMs = config.horizon === null ? null : toMs(config.horizon)
+    this.warmupMs = toMs(config.warmup)
+    this.maxCompletions = config.maxCompletions
+
+    // Ancho de bucket de las series: si no hay horizonte se arranca con una
+    // estimacion y la serie se auto-fusiona cuando la corrida la supera.
+    const bucketMs = Math.max(1, Math.round((this.horizonMs ?? 3_600_000) / 400))
+
+    this.trace = new TraceRecorder(
+      opts.withTrace ? config.trace : 'none',
+      DEFAULT_TRACE_RECORDS,
+      config.trace === 'full' ? DEFAULT_TRACE_ENTITIES : 0,
+    )
+    this.stats = new StatsCollector(compiled.nodes.length, bucketMs, seed)
+
+    this.eng = new Engine({
+      nodes: compiled.nodes,
+      seed,
+      horizonMs: this.horizonMs,
+      maxCompletions: config.maxCompletions,
+      warmupMs: this.warmupMs,
+      maxEvents: config.maxEvents,
+      conwipCap: compiled.conwipCap,
+      trace: this.trace,
+      hooks: this.stats,
+    })
+    this.nodes = compiled.nodes
+
+    for (const n of compiled.nodes) {
+      if (n instanceof ProcessNode || n instanceof BufferNode || n instanceof InspectionNode) {
+        this.queueSeries[n.id] = new BucketSeries(bucketMs, 0, 0)
+      }
+    }
+
+    seedInitialInventory(compiled.nodes, this.eng)
+    for (const s of compiled.sources) s.start(this.eng)
+    // Primera activacion de todos los nodos, para que el estado inicial sea
+    // consistente antes del primer evento.
+    for (let i = 0; i < compiled.nodes.length; i++) this.eng.wake(i)
+  }
+
+  /** Corre una tanda. Devuelve true si todavia queda trabajo. */
+  step(): boolean {
+    if (this.done) return false
+    const outcome = this.eng.runSlice(SLICE_EVENTS)
+    sampleQueues(this.nodes, this.queueSeries, this.eng.t)
+    if (outcome === SliceOutcome.Budget) return true
+    this.done = true
+    return false
+  }
+
+  /** Corre hasta el final sin ceder. */
+  runToCompletion(): void {
+    while (this.step()) {
+      /* sigue */
+    }
+  }
+
+  /** 0..1. Aproximado: usa el criterio de parada que este configurado. */
+  progress(): number {
+    if (this.done) return 1
+    if (this.maxCompletions !== null && this.maxCompletions > 0) {
+      return Math.min(1, this.eng.completions / this.maxCompletions)
+    }
+    if (this.horizonMs !== null && this.horizonMs > 0) {
+      return Math.min(1, this.eng.t / this.horizonMs)
+    }
+    return 0
+  }
+
+  simTimeMs(): SimTime {
+    return this.eng.t
+  }
+
+  completions(): number {
+    return this.eng.completions
+  }
+
+  finish(): RunResult {
+    this.runToCompletion()
+    sampleQueues(this.nodes, this.queueSeries, this.eng.t)
+    this.cached ??= report(this.model, this.nodes, this.eng, this.stats, this.queueSeries, this.warmupMs)
+    return this.cached
+  }
+
+  traceChunks(): TraceChunk[] {
+    return this.trace.finish()
+  }
+}
+
+export function compileRun(
+  model: SimModel,
+  config: RunConfig,
+  opts: SimulateOptions = {},
+): SimRun {
+  return new SimRun(model, config, opts)
+}
+
 export function simulate(
   model: SimModel,
   config: RunConfig,
   opts: SimulateOptions = {},
 ): SimulateOutput {
-  const rep = opts.replication ?? 0
-  const seed = (config.seed + rep) | 0
-  const msPerUnit = MS_PER_UNIT[model.line.timeUnit]
-  const toMs = (v: number): SimTime => Math.round(v * msPerUnit)
-
-  const compiled = compile(model)
-  const horizonMs = config.horizon === null ? null : toMs(config.horizon)
-  const warmupMs = toMs(config.warmup)
-
-  // Ancho de bucket de las series: si no hay horizonte, se arranca con una
-  // estimacion y la serie se auto-fusiona cuando la corrida la supera.
-  const bucketMs = Math.max(1, Math.round((horizonMs ?? 3_600_000) / 400))
-
-  const trace = new TraceRecorder(
-    config.trace,
-    DEFAULT_TRACE_RECORDS,
-    config.trace === 'full' ? DEFAULT_TRACE_ENTITIES : 0,
-  )
-  const stats = new StatsCollector(compiled.nodes.length, bucketMs, seed)
-
-  const eng = new Engine({
-    nodes: compiled.nodes,
-    seed,
-    horizonMs,
-    maxCompletions: config.maxCompletions,
-    warmupMs,
-    maxEvents: config.maxEvents,
-    conwipCap: compiled.conwipCap,
-    trace,
-    hooks: stats,
-  })
-
-  // Series por cola, una por bloque que acumula inventario.
-  const queueSeries: Record<string, BucketSeries> = {}
-  for (const n of compiled.nodes) {
-    if (n instanceof ProcessNode || n instanceof BufferNode || n instanceof InspectionNode) {
-      queueSeries[n.id] = new BucketSeries(bucketMs, 0, 0)
-    }
-  }
-
-  seedInitialInventory(compiled.nodes, eng)
-  for (const s of compiled.sources) s.start(eng)
-
-  // Primera activacion de todos los nodos para que el estado inicial sea
-  // consistente antes del primer evento.
-  for (let i = 0; i < compiled.nodes.length; i++) eng.wake(i)
-
-  while (eng.runSlice(1_000_000) === SliceOutcome.Budget) {
-    sampleQueues(compiled.nodes, queueSeries, eng.t)
-  }
-  sampleQueues(compiled.nodes, queueSeries, eng.t)
-
-  const result = report(model, compiled.nodes, eng, stats, queueSeries, warmupMs)
-  return { result, trace: opts.withTrace ? trace.finish() : [] }
+  const run = new SimRun(model, config, opts)
+  const result = run.finish()
+  return { result, trace: opts.withTrace ? run.traceChunks() : [] }
 }
 
 /** Carga el inventario inicial de los buffers antes de arrancar el reloj. */

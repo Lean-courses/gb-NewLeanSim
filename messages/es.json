@@ -1,0 +1,42 @@
+{
+  "app": {
+    "name": "NewLeanSim",
+    "tagline": "Simula procesos. Mostra las oportunidades."
+  },
+  "nav": {
+    "library": "Biblioteca",
+    "editor": "Editor",
+    "results": "Resultados",
+    "language": "Idioma"
+  },
+  "library": {
+    "templatesTitle": "Plantillas Lean",
+    "templatesSubtitle": "Cuatro demos listas para dar. Un clic y corren.",
+    "myModelsTitle": "Mis modelos",
+    "myModelsEmpty": "Todavia no guardaste ningun modelo.",
+    "newModel": "Nuevo modelo",
+    "open": "Abrir",
+    "watch": "Que mirar",
+    "insight": "El punto",
+    "scenarios": "Escenarios"
+  },
+  "run": {
+    "run": "Correr",
+    "running": "Corriendo",
+    "cancel": "Cancelar",
+    "throughput": "Throughput",
+    "leadTime": "Lead time",
+    "wip": "WIP",
+    "utilization": "Utilizacion",
+    "bottleneck": "Cuello de botella",
+    "unitsPerHour": "u/h"
+  },
+  "states": {
+    "busy": "Ocupado",
+    "starved": "Sin trabajo",
+    "blocked": "Bloqueado",
+    "setup": "Cambio",
+    "waitOp": "Espera operario",
+    "down": "Parado"
+  }
+}
