@@ -96,18 +96,44 @@ describe('chequeo estatico de capacidad', () => {
     expect(r.infeasible).toBe(false)
   })
 
-  it('el scrap aguas abajo obliga a procesar de mas aguas arriba', () => {
-    // Si la Est.2 descarta el 20%, la Est.1 tiene que procesar 1/0,8 = 1,25
-    // unidades por cada buena que sale.
+  it('el scrap infla a la estacion que descarta y a todas las de aguas arriba', () => {
+    // Si la Est.2 descarta el 20%, para sacar una unidad buena hay que procesar
+    // 1/0,8 = 1,25 en la Est.2 - y la Est.1 tiene que alimentar esas 1,25.
+    // O sea que el scrap al final de la linea infla a TODOS por igual y no
+    // mueve el cuello de botella de lugar.
     const m = serialLine(
       [{ cycleTime: 10 }, { cycleTime: 10, params: { scrapRate: 0.2 } }],
       { line: { flowControl: 'push', timeUnit: 'sec' }, source: { mode: 'unlimited' } },
     )
     const r = capacityCheck(m)
     expect(r.stations[0]!.scrapInflation).toBeCloseTo(1.25, 6)
+    expect(r.stations[1]!.scrapInflation).toBeCloseTo(1.25, 6)
     expect(r.stations[0]!.effectiveMs).toBeCloseTo(12_500, 0)
-    // Y el cuello de botella pasa a ser la Est.1, no la que descarta.
+    expect(r.stations[1]!.effectiveMs).toBeCloseTo(12_500, 0)
+    // Empate real: no se nombra un cuello de botella que no existe.
+    expect(r.bottleneckId).toBeNull()
+  })
+
+  it('el scrap temprano SI mueve el cuello de botella', () => {
+    // Est.1 de 10 s descartando 20% -> 12,5 s efectivos. Est.2 de 11 s sin
+    // scrap -> 11 s. Mirando solo el tablero de las maquinas el cuello de
+    // botella parece la Est.2; contando el scrap, es la Est.1.
+    const m = serialLine(
+      [{ cycleTime: 10, params: { scrapRate: 0.2 } }, { cycleTime: 11 }],
+      { line: { flowControl: 'push', timeUnit: 'sec' }, source: { mode: 'unlimited' } },
+    )
+    const r = capacityCheck(m)
+    expect(r.stations[0]!.effectiveMs).toBeCloseTo(12_500, 0)
+    expect(r.stations[1]!.effectiveMs).toBeCloseTo(11_000, 0)
     expect(r.bottleneckId).toBe('p01')
+  })
+
+  it('no nombra un cuello de botella en una linea pareja', () => {
+    const m = serialLine([{ cycleTime: 10 }, { cycleTime: 10 }, { cycleTime: 10 }], {
+      line: { flowControl: 'push', timeUnit: 'sec' },
+      source: { mode: 'unlimited' },
+    })
+    expect(capacityCheck(m).bottleneckId).toBeNull()
   })
 
   it('identifica el cuello de botella y la capacidad de la linea sin simular', () => {

@@ -4,6 +4,7 @@ import { TEMPLATES } from '@/lib/sim/presets/templates'
 import { DEFAULT_LOCALE, isLocale } from '@/lib/i18n/config'
 import { capacityCheck } from '@/lib/sim/validate/capacityCheck'
 import { rate } from '@/lib/format'
+import { MyModels } from '@/components/library/MyModels'
 
 export default async function LibraryPage() {
   const t = await getTranslations('library')
@@ -48,12 +49,7 @@ export default async function LibraryPage() {
         </div>
       </section>
 
-      <section className="mt-14">
-        <h2 className="text-lg font-semibold tracking-tight">{t('myModelsTitle')}</h2>
-        <div className="mt-4 rounded-card border border-dashed border-border bg-surface/40 px-5 py-10 text-center">
-          <p className="text-sm text-ink-faint">{t('myModelsEmpty')}</p>
-        </div>
-      </section>
+      <MyModels locale={locale} />
     </div>
   )
 }
@@ -70,7 +66,7 @@ function LineGlyph({ model }: { model: Parameters<typeof capacityCheck>[0] }) {
     <div className="flex h-12 items-end gap-1.5" aria-hidden="true">
       {cap.stations.map((s) => {
         const h = Math.max(14, Math.round((s.effectiveMs / max) * 48))
-        const isBottleneck = s.nodeId === cap.bottleneckId
+        const isBottleneck = cap.bottleneckId !== null && s.nodeId === cap.bottleneckId
         return (
           <div
             key={s.nodeId}

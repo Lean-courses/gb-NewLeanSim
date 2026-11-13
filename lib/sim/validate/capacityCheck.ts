@@ -106,14 +106,16 @@ export function capacityCheck(model: SimModel): CapacityReport {
     }
   })
 
-  let bottleneckId: string | null = null
-  let worst = -1
-  for (const s of stations) {
-    if (s.effectiveMs > worst) {
-      worst = s.effectiveMs
-      bottleneckId = s.nodeId
-    }
-  }
+  // Cuello de botella, SOLO si hay uno de verdad. En una linea pareja todas
+  // las estaciones empatan, y nombrar la primera por orden de array manda a
+  // mejorar donde no hay nada que ganar - que es exactamente el error que la
+  // herramienta existe para evitar.
+  const sorted = [...stations].sort((a, b) => b.effectiveMs - a.effectiveMs)
+  const worst = sorted[0]?.effectiveMs ?? -1
+  const second = sorted[1]?.effectiveMs
+  const TIE = 0.02
+  const isTie = second !== undefined && worst > 0 && (worst - second) / worst < TIE
+  const bottleneckId = sorted.length > 0 && !isTie ? sorted[0]!.nodeId : null
 
   return {
     taktMs,

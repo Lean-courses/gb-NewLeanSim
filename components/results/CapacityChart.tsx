@@ -120,10 +120,21 @@ export function CapacityChart({
         )}
         {hasScrap && <Swatch color="var(--color-state-blocked)" label={SEG_LABEL.scrap[locale]} />}
         <span className="ml-auto text-[11px] text-ink-faint">
-          {t('bottleneck')}:{' '}
-          <span className="text-ink-muted">
-            {report.stations.find((s) => s.nodeId === report.bottleneckId)?.label ?? '-'}
-          </span>
+          {report.bottleneckId === null ? (
+            // Sin empate no hay a quien senalar. Decir "linea pareja" es
+            // informacion; nombrar la primera estacion por orden de array seria
+            // mandar a mejorar donde no hay nada que ganar.
+            <span className="text-ink-muted">
+              {locale === 'es' ? 'Linea pareja' : 'Balanced line'}
+            </span>
+          ) : (
+            <>
+              {t('bottleneck')}:{' '}
+              <span className="text-ink-muted">
+                {report.stations.find((s) => s.nodeId === report.bottleneckId)?.label}
+              </span>
+            </>
+          )}
         </span>
       </figcaption>
     </figure>
